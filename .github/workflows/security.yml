@@ -43,6 +43,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: checkov
+        id: checkov
+        continue-on-error: true
         uses: bridgecrewio/checkov-action@v12
         with:
           directory: infra/
@@ -60,6 +62,8 @@ jobs:
           category: checkov
 
       - name: Trivy config scan
+        id: trivy-config
+        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
@@ -74,6 +78,10 @@ jobs:
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
+
+      - name: fail if any scan fails
+        if: steps.checkov.outcome == 'failure' || steps.trivy-config.outcome == 'failure'
+        run: exit 1
 
   dependencies:
     name: Dependency Scan
@@ -97,12 +105,13 @@ jobs:
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: trivy-fs.sarif
+          sarif_file: trivy-dependency.sarif
           category: trivy-fs
 
   image:
     name: Image Scan
     needs: [ iac, dependencies ]
+    if: always ()
     runs-on: ubuntu-latest
 
     steps:
