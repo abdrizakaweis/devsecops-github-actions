@@ -6,15 +6,22 @@ on:
 
   pull_request:
     branches: [ main ]
+  schedule:
+    - cron: '0 3 * * 1' 
 
 permissions:
   contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  gitleaks:
-    name: Gitleaks secret scan
+  secrets:
+    name: Secret Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -22,7 +29,101 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Gitleaks
+      - name: Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  iac:
+    name: Infrastructure Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false
+          skip_check: CKV_AWS_18
+
+      - name: upload checkov sarif results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          severity: HIGH,CRITICAL
+
+      - name: upload trivy config sarif results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
+  dependencies:
+    name: Dependency Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Trivy dependency scan
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-dependency.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: upload dependency results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  image:
+    name: Image Scan
+    needs: [ iac, dependencies ]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t scan-target:${{ github.sha }} .
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          image-ref: scan-target:${{ github.sha }}
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: upload image results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
