@@ -9,8 +9,8 @@ resource "aws_ecr_repository" "app" {
   }
 
   tags = {
-    Project   = var.project_name
-    ManagedBy = "terraform"
+    Project     = var.project_name
+    ManagedBy   = "terraform"
     Environment = "demo"
   }
 }
